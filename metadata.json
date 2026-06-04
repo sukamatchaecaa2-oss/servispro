@@ -1,0 +1,6 @@
+{
+  "name": "ServisPro",
+  "description": "Sistem Manajemen Servis Elektronik ServisPro Premium dengan simulasi Google/Gmail Login dan pembagian hak akses (role) Admin/Owner & Pelanggan.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
