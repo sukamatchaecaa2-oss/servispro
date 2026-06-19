@@ -23,7 +23,8 @@ import {
   LayoutDashboard,
   Coins,
   History,
-  Info
+  Info,
+  Calendar
 } from 'lucide-react';
 import { Order, OrderStatus, OrderCategory, Sparepart } from '../types';
 import { sendStatusUpdateEmail } from '../utils/emailService';
@@ -56,6 +57,9 @@ export const AdminSection: React.FC<AdminSectionProps> = ({
   const [tableSearch, setTableSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('All');
   const [categoryFilter, setCategoryFilter] = useState<string>('All');
+  const [dateFilter, setDateFilter] = useState<string>('All');
+  const [customStartDate, setCustomStartDate] = useState<string>('');
+  const [customEndDate, setCustomEndDate] = useState<string>('');
 
   // Technician Form states
   const [selectedOrderId, setSelectedOrderId] = useState<string>('');
@@ -279,8 +283,11 @@ export const AdminSection: React.FC<AdminSectionProps> = ({
 
   // Export Data Master to CSV file format simulation
   const handleExportDataCSV = () => {
+    const dataSource = filteredOrders;
+    const isFiltered = filteredOrders.length !== orders.length;
+
     const headers = 'ID Order,Pelanggan,WhatsApp,Email,Kategori,Merk Tipe,Biaya,Tanggal,Status,Sparepart\n';
-    const rows = orders.map((o) => {
+    const rows = dataSource.map((o) => {
       const spName = o.sparepartName || 'Tidak Ada';
       return `"${o.id}","${o.customerName}","${o.customerWhatsapp}","${o.customerEmail || ''}","${o.category}","${o.brandType}",${o.repairCost},"${o.createdAt}","${o.status}","${spName}"`;
     }).join('\n');
@@ -288,12 +295,17 @@ export const AdminSection: React.FC<AdminSectionProps> = ({
     const csvContent = 'data:text/csv;charset=utf-8,' + encodeURIComponent(headers + rows);
     const link = document.createElement('a');
     link.setAttribute('href', csvContent);
-    link.setAttribute('download', `ServisPro_DataMaster_2026.csv`);
+    link.setAttribute('download', isFiltered ? `ServisPro_DataMaster_Filtered.csv` : `ServisPro_DataMaster_2026.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
 
-    showActionToast('Sukses mengunduh laporan transaksi! File CSV berhasil dihasilkan otomatis.', 'success');
+    showActionToast(
+      isFiltered 
+        ? `Sukses mengekspor ${filteredOrders.length} data hasil filter ke format CSV!` 
+        : 'Sukses mengunduh laporan transaksi! File CSV berhasil dihasilkan otomatis.', 
+      'success'
+    );
   };
 
   // Format currency
@@ -322,15 +334,72 @@ export const AdminSection: React.FC<AdminSectionProps> = ({
 
   // Filter orders for Table Master
   const filteredOrders = orders.filter((order) => {
+    const s = tableSearch.toLowerCase();
     const matchesSearch =
-      order.id.toLowerCase().includes(tableSearch.toLowerCase()) ||
-      order.customerName.toLowerCase().includes(tableSearch.toLowerCase()) ||
-      order.brandType.toLowerCase().includes(tableSearch.toLowerCase());
+      order.id.toLowerCase().includes(s) ||
+      order.customerName.toLowerCase().includes(s) ||
+      order.brandType.toLowerCase().includes(s) ||
+      order.customerWhatsapp.includes(s) ||
+      (order.customerEmail || '').toLowerCase().includes(s) ||
+      order.category.toLowerCase().includes(s) ||
+      order.complaint.toLowerCase().includes(s) ||
+      (order.technicianNotes || '').toLowerCase().includes(s) ||
+      (order.sparepartName || '').toLowerCase().includes(s);
     
     const matchesStatus = statusFilter === 'All' || order.status === statusFilter;
     const matchesCategory = categoryFilter === 'All' || order.category === categoryFilter;
 
-    return matchesSearch && matchesStatus && matchesCategory;
+    // Local Date Comparison without Timezone skew
+    const parseLocalOrderDate = (createdAtStr: string): Date | null => {
+      try {
+        const datePart = createdAtStr.split(' ')[0];
+        const parts = datePart.split('-');
+        if (parts.length === 3) {
+          const year = parseInt(parts[0], 10);
+          const month = parseInt(parts[1], 10) - 1;
+          const day = parseInt(parts[2], 10);
+          return new Date(year, month, day);
+        }
+      } catch (e) {}
+      return null;
+    };
+
+    const orderDate = parseLocalOrderDate(order.createdAt);
+    let matchesDate = true;
+
+    if (orderDate && dateFilter !== 'All') {
+      const now = new Date();
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+      if (dateFilter === 'Today') {
+        matchesDate = orderDate.getTime() === today.getTime();
+      } else if (dateFilter === 'Yesterday') {
+        const yesterday = new Date(today);
+        yesterday.setDate(today.getDate() - 1);
+        matchesDate = orderDate.getTime() === yesterday.getTime();
+      } else if (dateFilter === 'ThisWeek') {
+        const sevenDaysAgo = new Date(today);
+        sevenDaysAgo.setDate(today.getDate() - 7);
+        matchesDate = orderDate >= sevenDaysAgo && orderDate <= today;
+      } else if (dateFilter === 'ThisMonth') {
+        const thirtyDaysAgo = new Date(today);
+        thirtyDaysAgo.setDate(today.getDate() - 30);
+        matchesDate = orderDate >= thirtyDaysAgo && orderDate <= today;
+      } else if (dateFilter === 'Custom') {
+        if (customStartDate) {
+          const parts = customStartDate.split('-');
+          const start = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+          if (orderDate < start) matchesDate = false;
+        }
+        if (customEndDate) {
+          const parts = customEndDate.split('-');
+          const end = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+          if (orderDate > end) matchesDate = false;
+        }
+      }
+    }
+
+    return matchesSearch && matchesStatus && matchesCategory && matchesDate;
   });
 
   // Calculate monthly stats for customized SVG Bar Chart
@@ -424,49 +493,111 @@ export const AdminSection: React.FC<AdminSectionProps> = ({
               </div>
 
               {/* Advanced filter components */}
-              <div className="p-4 bg-slate-50/75 border-b border-slate-100 grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div className="relative">
-                  <span className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-slate-400">
-                    <Search className="w-4 h-4" />
-                  </span>
-                  <input
-                    type="text"
-                    placeholder="Cari ID, pemilik, unit..."
-                    value={tableSearch}
-                    onChange={(e) => setTableSearch(e.target.value)}
-                    className="w-full pl-9 pr-3 py-1.5 text-xs bg-white border border-slate-205 rounded-xl focus:outline-hidden font-medium"
-                  />
+              <div className="p-4 bg-slate-50/75 border-b border-slate-100 space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div className="relative">
+                    <span className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-slate-400">
+                      <Search className="w-4 h-4" />
+                    </span>
+                    <input
+                      type="text"
+                      placeholder="Cari ID, pemilik, unit, nomor WA, catatan..."
+                      value={tableSearch}
+                      onChange={(e) => setTableSearch(e.target.value)}
+                      className="w-full pl-9 pr-3 py-1.5 text-xs bg-white border border-slate-205 rounded-xl focus:outline-hidden font-medium shadow-2xs hover:border-slate-300 focus:border-indigo-500 transition-colors"
+                    />
+                  </div>
+
+                  <div>
+                    <select
+                      value={statusFilter}
+                      onChange={(e) => setStatusFilter(e.target.value)}
+                      className="w-full px-3 py-1.5 text-xs bg-white border border-slate-205 rounded-xl focus:outline-hidden font-medium cursor-pointer shadow-2xs hover:border-slate-300 focus:border-indigo-500 transition-colors"
+                    >
+                      <option value="All">Semua Status</option>
+                      <option value="Menunggu Antrean">Menunggu Antrean</option>
+                      <option value="Sedang Dicek">Sedang Dicek</option>
+                      <option value="Sedang Diperbaiki">Sedang Diperbaiki</option>
+                      <option value="Selesai Siap Diambil">Selesai Siap Diambil</option>
+                      <option value="Gagal Diperbaiki">Gagal Diperbaiki</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <select
+                      value={categoryFilter}
+                      onChange={(e) => setCategoryFilter(e.target.value)}
+                      className="w-full px-3 py-1.5 text-xs bg-white border border-slate-205 rounded-xl focus:outline-hidden font-medium cursor-pointer shadow-2xs hover:border-slate-300 focus:border-indigo-500 transition-colors"
+                    >
+                      <option value="All">Semua Kategori</option>
+                      <option value="HP">Smartphone / HP</option>
+                      <option value="Laptop">PC / Laptop</option>
+                      <option value="Konsol Game">Konsol Game</option>
+                      <option value="TV">Monitor / TV</option>
+                      <option value="Lainnya">Lainnya</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <select
+                      value={dateFilter}
+                      onChange={(e) => setDateFilter(e.target.value)}
+                      className="w-full px-3 py-1.5 text-xs bg-white border border-slate-205 rounded-xl focus:outline-hidden font-medium cursor-pointer shadow-2xs hover:border-slate-300 focus:border-indigo-500 transition-colors"
+                    >
+                      <option value="All">Semua Tanggal</option>
+                      <option value="Today">Hari Ini</option>
+                      <option value="Yesterday">Kemarin</option>
+                      <option value="ThisWeek">7 Hari Terakhir</option>
+                      <option value="ThisMonth">30 Hari Terakhir</option>
+                      <option value="Custom">Pilih Tanggal Manual...</option>
+                    </select>
+                  </div>
                 </div>
 
-                <div>
-                  <select
-                    value={statusFilter}
-                    onChange={(e) => setStatusFilter(e.target.value)}
-                    className="w-full px-3 py-1.5 text-xs bg-white border border-slate-205 rounded-xl focus:outline-hidden font-medium cursor-pointer"
-                  >
-                    <option value="All">Semua Status</option>
-                    <option value="Menunggu Antrean">Menunggu Antrean</option>
-                    <option value="Sedang Dicek">Sedang Dicek</option>
-                    <option value="Sedang Diperbaiki">Sedang Diperbaiki</option>
-                    <option value="Selesai Siap Diambil">Selesai Siap Diambil</option>
-                    <option value="Gagal Diperbaiki">Gagal Diperbaiki</option>
-                  </select>
-                </div>
+                {/* Custom Date Range Picker Block (appears conditionally if Custom is selected) */}
+                {dateFilter === 'Custom' && (
+                  <div className="flex flex-col sm:flex-row items-center gap-3 p-3 bg-white border border-slate-200 rounded-2xl animate-fade-in text-xs">
+                    <div className="flex items-center gap-2 w-full sm:w-auto">
+                      <Calendar className="w-4 h-4 text-slate-400 shrink-0" />
+                      <span className="font-bold text-slate-500 whitespace-nowrap uppercase tracking-wider text-[10px]">Rentang Tanggal:</span>
+                    </div>
+                    
+                    <div className="grid grid-cols-2 gap-2 w-full sm:w-auto">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] text-slate-400 font-medium">Dari:</span>
+                        <input
+                          type="date"
+                          value={customStartDate}
+                          onChange={(e) => setCustomStartDate(e.target.value)}
+                          className="px-2.5 py-1 text-xs border border-slate-200 rounded-lg focus:outline-hidden focus:border-indigo-500 font-bold bg-slate-50/70"
+                        />
+                      </div>
+                      
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] text-slate-400 font-medium">Hingga:</span>
+                        <input
+                          type="date"
+                          value={customEndDate}
+                          onChange={(e) => setCustomEndDate(e.target.value)}
+                          className="px-2.5 py-1 text-xs border border-slate-200 rounded-lg focus:outline-hidden focus:border-indigo-500 font-bold bg-slate-50/70"
+                        />
+                      </div>
+                    </div>
 
-                <div>
-                  <select
-                    value={categoryFilter}
-                    onChange={(e) => setCategoryFilter(e.target.value)}
-                    className="w-full px-3 py-1.5 text-xs bg-white border border-slate-205 rounded-xl focus:outline-hidden font-medium cursor-pointer"
-                  >
-                    <option value="All">Semua Kategori</option>
-                    <option value="HP">Smartphone / HP</option>
-                    <option value="Laptop">PC / Laptop</option>
-                    <option value="Konsol Game">Konsol Game</option>
-                    <option value="TV">Monitor / TV</option>
-                    <option value="Lainnya">Lainnya</option>
-                  </select>
-                </div>
+                    {(customStartDate || customEndDate) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCustomStartDate('');
+                          setCustomEndDate('');
+                        }}
+                        className="text-[10px] font-extrabold text-rose-600 hover:text-rose-700 underline cursor-pointer ml-auto shrink-0 transition-colors border-none bg-transparent"
+                      >
+                        Atur Ulang
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Table Container */}
@@ -1076,7 +1207,7 @@ export const AdminSection: React.FC<AdminSectionProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-xs text-slate-705">
-                  {orders.map((o) => (
+                  {filteredOrders.map((o) => (
                     <tr key={o.id} className="hover:bg-slate-50 transition duration-150">
                       <td className="px-5 py-4 font-mono font-bold text-slate-800">{o.id}</td>
                       <td className="px-5 py-4 space-y-1">
@@ -1246,26 +1377,35 @@ export const AdminSection: React.FC<AdminSectionProps> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      const printContent = document.getElementById('printable-area-react')?.innerHTML;
-                      const originalContent = document.body.innerHTML;
+                      const printContent = document.getElementById('printable-area-react');
                       if (printContent) {
                         const styleSheet = document.createElement("style");
+                        styleSheet.id = "print-style-dynamic";
                         styleSheet.innerText = `
                           @media print {
-                            body {
-                              background-color: #ffffff !important;
-                              color: #000000 !important;
+                            body * {
+                              visibility: hidden !important;
+                            }
+                            #printable-area-react, #printable-area-react * {
+                              visibility: visible !important;
+                            }
+                            #printable-area-react {
+                              position: absolute !important;
+                              left: 0 !important;
+                              top: 0 !important;
+                              width: 100% !important;
+                              margin: 0 !important;
                               padding: 20px !important;
+                              border: none !important;
+                              box-shadow: none !important;
+                              background: white !important;
+                              color: black !important;
                             }
                           }
                         `;
                         document.head.appendChild(styleSheet);
-                        
-                        document.body.innerHTML = printContent;
                         window.print();
-                        document.body.innerHTML = originalContent;
-                        // Restore state without full browser reload
-                        window.location.reload();
+                        styleSheet.remove();
                       }
                     }}
                     className="px-5 py-2 bg-indigo-600 hover:bg-indigo-750 text-white font-extrabold text-xs rounded-xl shadow-xs transition flex items-center gap-1.5 cursor-pointer border-none"
